@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Airplane WebGL Test</title>
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #111; }
+        canvas { display: block; width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    
+
+    <canvas id="glcanvas" width="800" height="600"></canvas>
+    <div style="position: absolute; color: white; left: 10px; top: 10px; font-size: 32px;">
+	Score: <span id="score">0</span><br>
+	Level: <span id="level">0</span>
+    </div>
+
+    <!-- External dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/gl-matrix@2.8.1/dist/gl-matrix-min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/noisejs@2.1.0/index.min.js"></script>
+
+    <!-- Our files -->
+    <script src="shader.js"></script>
+    <script src="objLoader.js"></script>
+    <script src="mesh.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
