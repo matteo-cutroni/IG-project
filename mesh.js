@@ -55,16 +55,16 @@ class MeshDrawer {
 					return;
 				}
 
-				// Ambient
+				// ambient
 				vec3 ambient = 0.2 * baseColor.rgb;
 
-				// Diffuse
+				// diffuse
 				vec3 norm = normalize(v_viewNormal);
 				vec3 lightDirection = normalize(lightDir);
 				float diff = max(dot(norm, lightDirection), 0.0);
 				vec3 diffuse = diff * baseColor.rgb;
 
-				// Specular
+				// specular
 				vec3 viewDir = normalize(-v_viewFragPos); // camera is at origin in view space
 				vec3 halfDir = normalize(lightDirection + viewDir);
 				float spec = pow(max(dot(norm, halfDir), 0.0), alpha);
@@ -77,7 +77,6 @@ class MeshDrawer {
 		`;
 
 
-		// Reflection shaders (unchanged)
 		const reflectionVS = `
 			attribute vec3 a_position;
 			attribute vec3 a_normal;
@@ -102,7 +101,7 @@ class MeshDrawer {
 			uniform samplerCube u_skybox;
 			void main() {
 				vec3 I = normalize(v_worldPos - u_cameraPos);
-				vec3 R = reflect(I, normalize(v_worldNormal));
+				vec3 R = reflect(I, normalize(v_worldNormal)); //reflection vector from camera to surface point
 				gl_FragColor = textureCube(u_skybox, R);
 			}
 		`;
@@ -157,7 +156,7 @@ class MeshDrawer {
 			return;
 		}
 
-		// Otherwise use main shader
+		
 		gl.useProgram(this.prog);
 
 		gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, 'mvp'), false, matrixMVP);
@@ -165,7 +164,7 @@ class MeshDrawer {
 		gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, 'mv'), false, matrixMV);
 		gl.uniformMatrix3fv(gl.getUniformLocation(this.prog, 'normalMV'), false, matrixNormal);
 
-		// Bind base texture
+		// bind base texture
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 		gl.uniform1i(gl.getUniformLocation(this.prog, "tex"), 0);
@@ -198,12 +197,12 @@ class MeshDrawer {
 		gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, 'mv'), false, mv);
 		gl.uniformMatrix3fv(gl.getUniformLocation(this.prog, 'normalMV'), false, normal);
 
-		// Texture
+		// texture
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 		gl.uniform1i(gl.getUniformLocation(this.prog, "tex"), 0);
 
-		// Buffers
+		// buffers
 		gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
 		gl.vertexAttribPointer(this.aPosition, 3, gl.FLOAT, false, 0, 0);
 		gl.enableVertexAttribArray(this.aPosition);
@@ -220,8 +219,6 @@ class MeshDrawer {
 	}
 
 
-
-	// Other helper setters
 	setTexture(img) {
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);

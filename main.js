@@ -3,7 +3,7 @@ let gl = canvas.getContext("webgl");
 let planeDrawer = new MeshDrawer();
 let goalDrawer = new MeshDrawer();
 let terrainDrawer = new MeshDrawer();
-const noiseGen = new Noise(Math.random()); // seeded noise generator
+const noiseGen = new Noise(Math.random());
 let mvp = mat4.create(), mv = mat4.create(), normalMV = mat3.create();
 
 let planeReady = false;
@@ -22,7 +22,7 @@ class Background {
 		const vs = `
 			attribute vec2 pos;
 			void main() {
-				gl_Position = vec4(pos, 0, 1);
+				gl_Position = vec4(pos, 0, 1); //change to homogeneous
 			}
 		`;
 
@@ -39,7 +39,7 @@ class Background {
 
 		this.prog = InitShaderProgram(vs, fs);
 
-		// Two triangles to cover screen
+		// two triangles to cover entire screen
 		this.buffer = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
 		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
@@ -52,7 +52,7 @@ class Background {
 		gl.useProgram(this.prog);
 		let loc = gl.getAttribLocation(this.prog, "pos");
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-		gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0); // 2 floats per vertex
 		gl.enableVertexAttribArray(loc);
 		gl.disable(gl.DEPTH_TEST); // draw behind everything
 		gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -119,7 +119,7 @@ class Skybox {
 
 		for (let i = 0; i < 6; i++) {
 			const img = new Image();
-			img.crossOrigin = "anonymous"; // ensure it loads if served remotely
+			img.crossOrigin = "anonymous";
 			img.onload = () => {
 				gl.bindTexture(gl.TEXTURE_CUBE_MAP, tex);
 				gl.texImage2D(targets[i], 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
@@ -134,9 +134,6 @@ class Skybox {
 		}
 
 		gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-		gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-		gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
 		return tex;
 	}
@@ -150,14 +147,14 @@ class Skybox {
 		gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
 		gl.enableVertexAttribArray(loc);
 
-		// Strip translation from view matrix
+		// remove translation from view matrix
 		let viewRotation = mat4.clone(view);
 		viewRotation[12] = 0;
 		viewRotation[13] = 0;
 		viewRotation[14] = 0;
 
 		let correction = mat4.create();
-		mat4.rotateX(correction, correction, glMatrix.toRadian(-6.5)); // Adjust -5 to fine-tune
+		mat4.rotateX(correction, correction, glMatrix.toRadian(-6.5)); // adjusted tilt in image
 		mat4.multiply(viewRotation, correction, viewRotation);
 
 		gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, "viewRotation"), false, viewRotation);
@@ -173,6 +170,10 @@ class Skybox {
 
 }
 
+function noise(x, z) {
+	return noiseGen.perlin2(x, z);
+}
+
 
 class ChunkedTerrain {
 	constructor(chunkSize = 40, resolution = 20, textureURL) {
@@ -183,20 +184,29 @@ class ChunkedTerrain {
 		this.normals = [];
 		this.texCoords = [];
 
-		this.chunks = new Map(); // key = "x_z", value = {verts, normals, texCoords}
 		this.chunkMeshes = new Map(); // key = "x_z", value = {positionBuffer, normalBuffer, texCoordBuffer}
 		this.generateChunk(0, 0);
 
 	}
 
-	// Generates and stores a chunk at (chunkX, chunkZ)
+	// compute normal from three points
+	// cross product between two triangle edges gives surface normal
+	computeNormal(p1, p2, p3) {
+		const u = vec3.create(), v = vec3.create(), n = vec3.create();
+		vec3.subtract(u, p2, p1);
+		vec3.subtract(v, p3, p1);
+		vec3.cross(n, u, v);
+		vec3.normalize(n, n);
+		return n;
+	}
+
+	// generates and stores a chunk at (chunkX, chunkZ)
 	generateChunk(chunkX, chunkZ) {
 
 		const key = `${chunkX}_${chunkZ}`;
-		if (this.chunkMeshes.has(key)) return;
+		if (this.chunkMeshes.has(key)) return; // prevent generating same chunk
 
-		const hilly = new HillyTerrain(this.chunkSize, this.resolution, this.textureURL);
-		const dx = chunkX * this.chunkSize;
+		const dx = chunkX * this.chunkSize; //convert index to world 
 		const dz = chunkZ * this.chunkSize;
 
 		const verts = [], texCoords = [], normals = [];
@@ -204,7 +214,7 @@ class ChunkedTerrain {
 
 		for (let z = 0; z < this.resolution; z++) {
 			for (let x = 0; x < this.resolution; x++) {
-				// Compute world positions for each cell in the chunk
+				// compute world positions for each cell in the chunk
 				const x0 = (x / this.resolution) * this.chunkSize + dx;
 				const x1 = ((x + 1) / this.resolution) * this.chunkSize + dx;
 				const z0 = (z / this.resolution) * this.chunkSize + dz;
@@ -220,21 +230,19 @@ class ChunkedTerrain {
 				const p01 = [x0, y01, z1];
 				const p11 = [x1, y11, z1];
 
-				// First triangle
-				const n1 = HillyTerrain.computeNormal(p00, p10, p11);
+
+				const n1 = this.computeNormal(p00, p10, p11);
 				verts.push(...p00, ...p10, ...p11);
 				normals.push(...n1, ...n1, ...n1);
 				texCoords.push(0, 0, 1, 0, 1, 1);
 
-				// Second triangle
-				const n2 = HillyTerrain.computeNormal(p00, p11, p01);
+				const n2 = this.computeNormal(p00, p11, p01);
 				verts.push(...p00, ...p11, ...p01);
 				normals.push(...n2, ...n2, ...n2);
 				texCoords.push(0, 0, 1, 1, 0, 1);
 			}
 		}
 
-		// Create GPU buffers
 		const posBuf = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
 		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
@@ -259,6 +267,8 @@ class ChunkedTerrain {
 
 	draw(vp, view, planeX, planeZ) {
 		const chunkRadius = 4;
+
+		//current chunk
 		const cx = Math.floor(planeX / this.chunkSize);
 		const cz = Math.floor(planeZ / this.chunkSize);
 
@@ -286,90 +296,7 @@ class ChunkedTerrain {
 			}
 		}
 	}
-
-	getMeshBuffers() {
-		return {
-			verts: this.verts,
-			normals: this.normals,
-			texCoords: this.texCoords
-		};
-	}
 }
-
-
-class HillyTerrain {
-	constructor(size = 100, resolution = 100, textureURL) {
-		this.verts = [];
-		this.texCoords = [];
-		this.normals = [];
-
-		const getHeight = (x, z) => noise(x * 0.1, z * 0.1) * 3.0 - 4.;
-
-		for (let z = 0; z < resolution; z++) {
-			for (let x = 0; x < resolution; x++) {
-				// Compute 4 corners of the grid cell
-				const x0 = (x / resolution - 0.5) * size;
-				const z0 = (z / resolution - 0.5) * size;
-				const x1 = ((x + 1) / resolution - 0.5) * size;
-				const z1 = ((z + 1) / resolution - 0.5) * size;
-
-				const y00 = getHeight(x0, z0);
-				const y10 = getHeight(x1, z0);
-				const y01 = getHeight(x0, z1);
-				const y11 = getHeight(x1, z1);
-
-				const p00 = [x0, y00, z0];
-				const p10 = [x1, y10, z0];
-				const p01 = [x0, y01, z1];
-				const p11 = [x1, y11, z1];
-
-				// First triangle: p00, p10, p11
-				this.addTriangle(p00, p10, p11, x, z, x + 1, z + 1);
-				// Second triangle: p00, p11, p01
-				this.addTriangle(p00, p11, p01, x, z, x + 1, z + 1);
-			}
-		}
-
-		this.textureURL = textureURL;
-	}
-
-	// Compute normal from three points
-	static computeNormal(p1, p2, p3) {
-		const u = vec3.create(), v = vec3.create(), n = vec3.create();
-		vec3.subtract(u, p2, p1);
-		vec3.subtract(v, p3, p1);
-		vec3.cross(n, u, v);
-		vec3.normalize(n, n);
-		return n;
-	}
-
-	addTriangle(p1, p2, p3, x, z, x2, z2) {
-		const normal = HillyTerrain.computeNormal(p1, p2, p3);
-
-		// Texture coordinates are arbitrary here (tiled)
-		const s = 10;
-		const t1 = [x / s, z / s];
-		const t2 = [x2 / s, z / s];
-		const t3 = [x2 / s, z2 / s];
-
-		for (let i = 0; i < 3; i++) {
-			const p = [p1, p2, p3][i];
-			const t = [t1, t2, t3][i];
-			this.verts.push(...p);
-			this.normals.push(...normal);
-			this.texCoords.push(...t);
-		}
-	}
-
-	getMeshBuffers() {
-		return {
-			verts: this.verts,
-			normals: this.normals,
-			texCoords: this.texCoords
-		};
-	}
-}
-
 
 
 
@@ -411,7 +338,6 @@ class Plane {
 			}
 			this.speed = 0.05;
 		} else {
-			this.pitch = 0; // no vertical motion
 			if (keys['w'] || keys['ArrowUp']) this.speed += 0.001;
 			if (keys['s'] || keys['ArrowDown']) this.speed -= 0.001;
 			this.speed = Math.max(this.minSpeed, Math.min(this.maxSpeed, this.speed));
@@ -429,11 +355,9 @@ class Plane {
 
 		mat4.rotateY(model, model, Math.PI / 2 + this.angle);
 
-		// Apply pitch (Z-axis tilt)
 		if (window.currentGameLevel === 2)
 			mat4.rotateZ(model, model, this.pitch);
 
-		// Apply roll (X-axis tilt)
 		mat4.rotateX(model, model, this.roll);
 
 		let mv = mat4.clone(model);
@@ -607,7 +531,7 @@ class Game {
 		this.score = 0;
 		this.level = 0;
 		this.goalDelay = 2000;
-		this.lastGoalTime = this.goalDelay;
+		this.lastGoalTime = this.goalDelay; // so that at the start there already is one star
 		window.currentGameLevel = 0;
 		window.addEventListener('keydown', e => this.keys[e.key] = true);
 		window.addEventListener('keyup', e => this.keys[e.key] = false);
@@ -628,7 +552,7 @@ class Game {
 
 			let y = -0.5; // default height
 			if (this.level === 2) {
-				y = (Math.random() - 0.5) * 4.0; // allow vertical placement in Level 2
+				y = (Math.random() - 0.5) * 4.0; // allow vertical placement in level 2
 			}
 
 			this.goals.push(new Goal(x, z, y));
@@ -698,7 +622,7 @@ function TryStartGame() {
 		skyboxLevel2 = new Skybox("assets/skybox2/");
 		groundPlane = new ChunkedTerrain(40, 20, "assets/Poliigon_GrassPatchyGround_4585_BaseColor.jpg");
 
-		terrainDrawer.setLightDir(0, -1, -1); // Or tweak based on level
+		terrainDrawer.setLightDir(0, -1, -1); 
 		terrainDrawer.setShininess(1000);
 
 		const img = new Image();
@@ -778,18 +702,16 @@ function LoadGoalModel(objURL, textureURL) {
 	});
 }
 
-function noise(x, z) {
-	return noiseGen.perlin2(x, z);
-}
-
 
 
 function GameLoop(time) {
+	// time is given by requestAnimationFrame
 	let dt = time - lastTime;
 	lastTime = time;
 
 	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 	gl.enable(gl.DEPTH_TEST);
+	
 	let proj = mat4.create();
 	mat4.perspective(proj, Math.PI / 4, canvas.width / canvas.height, 0.1, 100);
 
@@ -797,12 +719,12 @@ function GameLoop(time) {
 	mat4.translate(planeModel, planeModel, [game.plane.x, game.plane.y, game.plane.z]);
 	mat4.rotateY(planeModel, planeModel, -Math.PI / 2 + game.plane.angle);
 
-	// Compute camera position behind the plane
-	let camOffset = vec3.fromValues(-3, 0.5, 0); // offset in plane's local space
+	// compute camera position behind the plane
+	let camOffset = vec3.fromValues(-3, 0.5, 0); // offset in plane local space
 	let camPos = vec3.create();
-	vec3.transformMat4(camPos, camOffset, planeModel);
+	vec3.transformMat4(camPos, camOffset, planeModel);//transforms the offset by the plane model matrix into world space
 
-	// Target is the plane's position + forward direction
+	// target is the plane position + forward direction
 	let targetOffset = vec3.fromValues(2, 0, 0);
 	let camTarget = vec3.create();
 	vec3.transformMat4(camTarget, targetOffset, planeModel);
@@ -816,7 +738,6 @@ function GameLoop(time) {
 	let vp = mat4.create();
 	mat4.multiply(vp, proj, view);
 
-	// Background logic
 	if (window.currentGameLevel === 0) {
 		background.draw();
 	}
