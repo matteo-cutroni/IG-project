@@ -11,6 +11,7 @@ class MeshDrawer {
 		this.cameraPos = [0, 0, 0];
 		this.cubemap = null;
 
+
 		const VS = `
 			attribute vec3 pos;
 			attribute vec3 normal;
@@ -108,6 +109,10 @@ class MeshDrawer {
 
 		this.prog = InitShaderProgram(VS, FS);
 		this.reflectProgram = InitShaderProgram(reflectionVS, reflectionFS);
+
+		this.aPosition = gl.getAttribLocation(this.prog, 'pos');
+		this.aNormal = gl.getAttribLocation(this.prog, 'normal');
+		this.aTexCoord = gl.getAttribLocation(this.prog, 'texCoord');
 	}
 
 	setMesh(vertPos, texCoords, normals) {
@@ -139,6 +144,7 @@ class MeshDrawer {
 			let posLoc = gl.getAttribLocation(this.reflectProgram, "a_position");
 			let normLoc = gl.getAttribLocation(this.reflectProgram, "a_normal");
 
+
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.position_buffer);
 			gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
 			gl.enableVertexAttribArray(posLoc);
@@ -168,6 +174,7 @@ class MeshDrawer {
 		let texLoc = gl.getAttribLocation(this.prog, "texCoord");
 		let normLoc = gl.getAttribLocation(this.prog, "normal");
 
+
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.position_buffer);
 		gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
 		gl.enableVertexAttribArray(posLoc);
@@ -181,6 +188,35 @@ class MeshDrawer {
 		gl.enableVertexAttribArray(normLoc);
 
 		gl.drawArrays(gl.TRIANGLES, 0, this.numTriangles);
+	}
+
+	drawChunkMesh(posBuf, texBuf, normBuf, count, mvp, mv, normal) {
+		gl.useProgram(this.prog);
+
+		gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, 'mvp'), false, mvp);
+		gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, 'mat'), false, this.mat); 
+		gl.uniformMatrix4fv(gl.getUniformLocation(this.prog, 'mv'), false, mv);
+		gl.uniformMatrix3fv(gl.getUniformLocation(this.prog, 'normalMV'), false, normal);
+
+		// Texture
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, this.texture);
+		gl.uniform1i(gl.getUniformLocation(this.prog, "tex"), 0);
+
+		// Buffers
+		gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+		gl.vertexAttribPointer(this.aPosition, 3, gl.FLOAT, false, 0, 0);
+		gl.enableVertexAttribArray(this.aPosition);
+
+		gl.bindBuffer(gl.ARRAY_BUFFER, texBuf);
+		gl.vertexAttribPointer(this.aTexCoord, 2, gl.FLOAT, false, 0, 0);
+		gl.enableVertexAttribArray(this.aTexCoord);
+
+		gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
+		gl.vertexAttribPointer(this.aNormal, 3, gl.FLOAT, false, 0, 0);
+		gl.enableVertexAttribArray(this.aNormal);
+
+		gl.drawArrays(gl.TRIANGLES, 0, count);
 	}
 
 

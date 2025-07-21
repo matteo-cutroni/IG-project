@@ -14,7 +14,6 @@ let background;
 let skyboxLevel1;
 let skyboxLevel2;
 let groundPlane;
-let lightProj, lightView, lightMVP;
 let lastTime = 0;
 
 
@@ -175,6 +174,129 @@ class Skybox {
 }
 
 
+class ChunkedTerrain {
+	constructor(chunkSize = 40, resolution = 20, textureURL) {
+		this.chunkSize = chunkSize;
+		this.resolution = resolution;
+		this.textureURL = textureURL;
+		this.verts = [];
+		this.normals = [];
+		this.texCoords = [];
+
+		this.chunks = new Map(); // key = "x_z", value = {verts, normals, texCoords}
+		this.chunkMeshes = new Map(); // key = "x_z", value = {positionBuffer, normalBuffer, texCoordBuffer}
+		this.generateChunk(0, 0);
+
+	}
+
+	// Generates and stores a chunk at (chunkX, chunkZ)
+	generateChunk(chunkX, chunkZ) {
+
+		const key = `${chunkX}_${chunkZ}`;
+		if (this.chunkMeshes.has(key)) return;
+
+		const hilly = new HillyTerrain(this.chunkSize, this.resolution, this.textureURL);
+		const dx = chunkX * this.chunkSize;
+		const dz = chunkZ * this.chunkSize;
+
+		const verts = [], texCoords = [], normals = [];
+		const getHeight = (x, z) => noise(x * 0.1, z * 0.1) * 3.0 - 4.0;
+
+		for (let z = 0; z < this.resolution; z++) {
+			for (let x = 0; x < this.resolution; x++) {
+				// Compute world positions for each cell in the chunk
+				const x0 = (x / this.resolution) * this.chunkSize + dx;
+				const x1 = ((x + 1) / this.resolution) * this.chunkSize + dx;
+				const z0 = (z / this.resolution) * this.chunkSize + dz;
+				const z1 = ((z + 1) / this.resolution) * this.chunkSize + dz;
+
+				const y00 = getHeight(x0, z0);
+				const y10 = getHeight(x1, z0);
+				const y01 = getHeight(x0, z1);
+				const y11 = getHeight(x1, z1);
+
+				const p00 = [x0, y00, z0];
+				const p10 = [x1, y10, z0];
+				const p01 = [x0, y01, z1];
+				const p11 = [x1, y11, z1];
+
+				// First triangle
+				const n1 = HillyTerrain.computeNormal(p00, p10, p11);
+				verts.push(...p00, ...p10, ...p11);
+				normals.push(...n1, ...n1, ...n1);
+				texCoords.push(0, 0, 1, 0, 1, 1);
+
+				// Second triangle
+				const n2 = HillyTerrain.computeNormal(p00, p11, p01);
+				verts.push(...p00, ...p11, ...p01);
+				normals.push(...n2, ...n2, ...n2);
+				texCoords.push(0, 0, 1, 1, 0, 1);
+			}
+		}
+
+		// Create GPU buffers
+		const posBuf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+
+		const normBuf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+
+		const texBuf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, texBuf);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
+
+		this.chunkMeshes.set(key, {
+			posBuf,
+			normBuf,
+			texBuf,
+			count: verts.length / 3
+		});
+
+
+	}
+
+	draw(vp, view, planeX, planeZ) {
+		const chunkRadius = 4;
+		const cx = Math.floor(planeX / this.chunkSize);
+		const cz = Math.floor(planeZ / this.chunkSize);
+
+		for (let dz = -chunkRadius; dz <= chunkRadius; dz++) {
+			for (let dx = -chunkRadius; dx <= chunkRadius; dx++) {
+				const chunkX = cx + dx;
+				const chunkZ = cz + dz;
+				const key = `${chunkX}_${chunkZ}`;
+
+				this.generateChunk(chunkX, chunkZ);
+				const mesh = this.chunkMeshes.get(key);
+				if (!mesh) continue;
+
+
+				const model = mat4.create(); // identity
+				const mv = mat4.create();
+				mat4.multiply(mv, view, model);
+				const mvp = mat4.create();
+				mat4.multiply(mvp, vp, model);
+				const normal = mat3.create();
+				mat3.normalFromMat4(normal, mv);
+
+				terrainDrawer.drawChunkMesh(mesh.posBuf, mesh.texBuf, mesh.normBuf, mesh.count, mvp, mv, normal);
+
+			}
+		}
+	}
+
+	getMeshBuffers() {
+		return {
+			verts: this.verts,
+			normals: this.normals,
+			texCoords: this.texCoords
+		};
+	}
+}
+
+
 class HillyTerrain {
 	constructor(size = 100, resolution = 100, textureURL) {
 		this.verts = [];
@@ -262,19 +384,42 @@ class Plane {
 		this.maxSpeed = 0.1;
 		this.minSpeed = 0.005;
 		this.meshDrawer = meshDrawer;
+		this.pitch = 0;
+		this.roll = 0;
 	}
 
 	update(keys) {
-		if (keys['a'] || keys['ArrowLeft']) this.angle += 0.03;
-		if (keys['d'] || keys['ArrowRight']) this.angle -= 0.03;
+		this.roll = 0;
+		if (keys['a'] || keys['ArrowLeft']) {
+			this.angle += 0.03;
+			this.roll = 0.3;
+		}
+		if (keys['d'] || keys['ArrowRight']) {
+			this.angle -= 0.03;
+			this.roll = -0.3;
+		}
 
-		if (keys['w'] || keys['ArrowUp']) this.speed += 0.001;
-		if (keys['s'] || keys['ArrowDown']) this.speed -= 0.001;
-
-		this.speed = Math.max(this.minSpeed, Math.min(this.maxSpeed, this.speed));
+		if (window.currentGameLevel === 2) {
+			this.pitch = 0;
+			if (keys['w'] || keys['ArrowUp']) {
+				this.y += 0.05;
+				this.pitch = -0.2;
+			}
+			if (keys['s'] || keys['ArrowDown']) {
+				this.y -= 0.05;
+				this.pitch = 0.2;
+			}
+			this.speed = 0.05;
+		} else {
+			this.pitch = 0; // no vertical motion
+			if (keys['w'] || keys['ArrowUp']) this.speed += 0.001;
+			if (keys['s'] || keys['ArrowDown']) this.speed -= 0.001;
+			this.speed = Math.max(this.minSpeed, Math.min(this.maxSpeed, this.speed));
+		}
 
 		this.x += Math.sin(this.angle) * this.speed;
 		this.z += Math.cos(this.angle) * this.speed;
+
 	}
 
 
@@ -282,7 +427,14 @@ class Plane {
 		let model = mat4.create();
 		mat4.translate(model, model, [this.x, this.y, this.z]);
 
-		mat4.rotateY(model, model,Math.PI / 2 + this.angle);
+		mat4.rotateY(model, model, Math.PI / 2 + this.angle);
+
+		// Apply pitch (Z-axis tilt)
+		if (window.currentGameLevel === 2)
+			mat4.rotateZ(model, model, this.pitch);
+
+		// Apply roll (X-axis tilt)
+		mat4.rotateX(model, model, this.roll);
 
 		let mv = mat4.clone(model);
 		let normal = mat3.create();
@@ -290,13 +442,15 @@ class Plane {
 		let mvp = mat4.create();
 		mat4.multiply(mvp, vpMatrix, model);
 		this.meshDrawer.draw(mvp, mv, normal);
+
 	}
+
 }
 
 class Goal {
-	constructor(x, z) {
+	constructor(x, z, y = -0.5){
 		this.x = x;
-		this.y = -0.5;
+		this.y = y;
 		this.z = z;
 		this.radius = 0.4;
 		this.hit = false;
@@ -310,12 +464,13 @@ class Goal {
 		
 	}
 
-	checkCollision(planeX, planeZ) {
+	checkCollision(planeX, planeY, planeZ) {
 		if (this.hit) return false;
 
 		const dx = planeX - this.x;
+		const dy = planeY - this.y;
 		const dz = planeZ - this.z;
-		const distSq = dx*dx + dz*dz;
+		const distSq = dx * dx + dy * dy + dz * dz;
 
 		if (distSq < this.radius * this.radius) {
 			this.hit = true;
@@ -442,6 +597,7 @@ class Game {
 		this.terrainDrawer = terrainDrawer;
 		this.meshDrawer.setLighting(false);
 		this.goalDrawer.setLighting(false);
+		this.terrainDrawer.setLighting(false);
 		this.plane = new Plane(meshDrawer);
 		this.goals = [];
 		this.goal_animations = [];
@@ -450,8 +606,8 @@ class Game {
 		this.keys = {};
 		this.score = 0;
 		this.level = 0;
-		this.lastGoalTime = 0;
 		this.goalDelay = 2000;
+		this.lastGoalTime = this.goalDelay;
 		window.currentGameLevel = 0;
 		window.addEventListener('keydown', e => this.keys[e.key] = true);
 		window.addEventListener('keyup', e => this.keys[e.key] = false);
@@ -464,15 +620,25 @@ class Game {
 
 		this.lastGoalTime += deltaTime;
 		if (this.lastGoalTime > this.goalDelay) {
-			const x = (Math.random() - 0.5) * 20; // Range -10 to 10
-			const z = (Math.random() - 0.5) * 20 - 5; // Shift back a little
-			this.goals.push(new Goal(x, z));
+			
+			const range = 10;
+			const forwardOffset = 5;
+			const x = (Math.random() - 0.5) * range;
+			const z = this.plane.z + Math.random() * range + forwardOffset;
+
+			let y = -0.5; // default height
+			if (this.level === 2) {
+				y = (Math.random() - 0.5) * 4.0; // allow vertical placement in Level 2
+			}
+
+			this.goals.push(new Goal(x, z, y));
 			this.lastGoalTime = 0;
 		}
 
+
 		this.goals.forEach(goal => {
 			goal.update();
-			if (!goal.hit && goal.checkCollision(this.plane.x, this.plane.z)) {
+			if (!goal.hit && goal.checkCollision(this.plane.x, this.plane.y, this.plane.z)) {
 				this.score++;
 
 				if (this.level === 1) {
@@ -498,7 +664,7 @@ class Game {
 			}
 		});
 
-		this.goals = this.goals.filter(goal => goal.z < 0 && !goal.hit);
+		this.goals = this.goals.filter(goal => !goal.hit);
 
 		this.goal_animations.forEach(f => f.update());
 		this.goal_animations = this.goal_animations.filter(f => !f.isDone());
@@ -530,9 +696,8 @@ function TryStartGame() {
 		background = new Background();
 		skyboxLevel1 = new Skybox("assets/skybox1/");
 		skyboxLevel2 = new Skybox("assets/skybox2/");
-		groundPlane = new HillyTerrain(80, 80, "assets/Poliigon_GrassPatchyGround_4585_BaseColor.jpg");
-		const terrainData = groundPlane.getMeshBuffers();
-		terrainDrawer.setMesh(terrainData.verts, terrainData.texCoords, terrainData.normals);
+		groundPlane = new ChunkedTerrain(40, 20, "assets/Poliigon_GrassPatchyGround_4585_BaseColor.jpg");
+
 		terrainDrawer.setLightDir(0, -1, -1); // Or tweak based on level
 		terrainDrawer.setShininess(1000);
 
@@ -562,7 +727,7 @@ function LoadModel(objURL, textureURL) {
 
 		const buffers = obj.getVertexBuffers();
 		planeDrawer.setMesh(buffers.positionBuffer, buffers.texCoordBuffer, buffers.normalBuffer);
-		planeDrawer.setLightDir(0., 1, 1);
+		planeDrawer.setLightDir(0., 1, -1);
 		planeDrawer.setShininess(50);
 
 		if (textureURL) {
@@ -594,7 +759,7 @@ function LoadGoalModel(objURL, textureURL) {
 
 		const buffers = obj.getVertexBuffers();
 		goalDrawer.setMesh(buffers.positionBuffer, buffers.texCoordBuffer, buffers.normalBuffer);
-		goalDrawer.setLightDir(0, 1, 1);
+		goalDrawer.setLightDir(0, 1, -1);
 		goalDrawer.setShininess(50);
 
 		if (textureURL) {
@@ -628,22 +793,25 @@ function GameLoop(time) {
 	let proj = mat4.create();
 	mat4.perspective(proj, Math.PI / 4, canvas.width / canvas.height, 0.1, 100);
 
-	let px = game.plane.x;
-	let pz = game.plane.z;
-	let angle = game.plane.angle;
+	let planeModel = mat4.create();
+	mat4.translate(planeModel, planeModel, [game.plane.x, game.plane.y, game.plane.z]);
+	mat4.rotateY(planeModel, planeModel, -Math.PI / 2 + game.plane.angle);
 
-	let camDistance = 3.0;
-	let camHeight = .5;
+	// Compute camera position behind the plane
+	let camOffset = vec3.fromValues(-3, 0.5, 0); // offset in plane's local space
+	let camPos = vec3.create();
+	vec3.transformMat4(camPos, camOffset, planeModel);
 
-	let camX = px - Math.sin(angle) * camDistance;
-	let camZ = pz - Math.cos(angle) * camDistance;
-
-	let eye = [camX, camHeight, camZ];
-	let target = [px + Math.sin(angle), 0.0, pz + Math.cos(angle)];
-	let up = [0, 1, 0];
+	// Target is the plane's position + forward direction
+	let targetOffset = vec3.fromValues(2, 0, 0);
+	let camTarget = vec3.create();
+	vec3.transformMat4(camTarget, targetOffset, planeModel);
 
 	let view = mat4.create();
-	mat4.lookAt(view, eye, target, up);
+	mat4.lookAt(view, camPos, camTarget, [0, 1, 0]);
+
+
+
 
 	let vp = mat4.create();
 	mat4.multiply(vp, proj, view);
@@ -660,20 +828,10 @@ function GameLoop(time) {
 		skyboxLevel2.draw(view);
 
 		if (terrainReady) {
-			let model = mat4.create();
-			let mv = mat4.create();
-			mat4.multiply(mv, view, model);
-
-			let normal = mat3.create();
-			mat3.normalFromMat4(normal, mv);
-
-			let mvp = mat4.create();
-			mat4.multiply(mvp, vp, model);
-
-			terrainDrawer.draw(mvp, mv, normal);
+			groundPlane.draw(vp, view, game.plane.x, game.plane.z)
 		}
 
-		const camPos = eye;
+		
 		planeDrawer.setReflectionMode(true, camPos);
 		planeDrawer.cubemap = skyboxLevel2.texture;
 	} else {
